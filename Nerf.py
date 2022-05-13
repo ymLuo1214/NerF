@@ -61,21 +61,26 @@ class Nerf(nn.Module):
         gamax=x
         for l in self.linear1:
             x=l(x)
-            x=nn.ReLU(x)
+            x=F.relu(x,inplace=True)
+        
         x=self.linear2(x)
         x=torch.cat((gamax,x),dim=-1)
         for l in self.linear3:
             x=l(x)
-            x=nn.ReLU(x)
+            x=F.relu(x,inplace=True)
         sigma=self.linear_sigma(x)
-        x=nn.ReLU(torch.cat([d,self.linear_rgb[0]],dim=-1))
-        rgb=self.linear_rgb(x)
+        x=torch.cat([d,x],dim=-1)
+        x=self.linear_rgb[0](x)
+        x=F.relu(x,inplace=True)
+        rgb=self.linear_rgb[1](x)
         output=[sigma,rgb]
         return output
 
 
 
 model = Nerf()
-x = torch.arange(10*3).view(10, 3)
-d = torch.arange(10*3).view(10, 3)
-model(x, d)
+x = torch.arange(5*10*3).view(5,10, 3)
+d = torch.arange(5*10*2).view(5,10, 2)
+output=model(x, d)
+print(output[0].size())
+print(output[1].size())
