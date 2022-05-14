@@ -6,7 +6,7 @@ import numpy as np
 from cmath import pi
 
 
-def posEmbed(x:torch.tensor, L:int)->torch.tensor:  # x:N*L*3
+def posEmbed(x: torch.tensor, L: int) -> torch.tensor:  # x:N*L*3
     '''
     func = [torch.sin, torch.cos]
     freq = 2**torch.linspace(0, L-1, L)*pi
@@ -19,14 +19,14 @@ def posEmbed(x:torch.tensor, L:int)->torch.tensor:  # x:N*L*3
                                                                 for p in x[i, j, k]*freq for f in func])
     return freq_pos
     '''
-    result=[]
-    B,N=x.shape[0],x.shape[1]
-    freq=2.**torch.linspace(0,L-1,L)*pi
-    func=[torch.cos,torch.sin]
+    result = []
+    B, N = x.shape[0], x.shape[1]
+    freq = 2.**torch.linspace(0, L-1, L)
+    func = [torch.cos, torch.sin]
     for fre in freq:
         for f in func:
             result.append(f(fre*x.unsqueeze(-1)))
-    return torch.cat(result,dim=-1).view(B,N,-1)
+    return torch.cat(result, dim=-1).view(B, N, -1)
 
 
 def mlpMaker(in_cha, out_cha, act_fun=nn.ReLU(), norm=None):
@@ -50,37 +50,49 @@ class Nerf(nn.Module):
         self.linear1 = nn.ModuleList([nn.Linear(
             self.xins, self.W)]+[nn.Linear(self.W, self.W) for i in range(self.mlp_num % 2-1)])
         self.linear2 = nn.Linear(self.W, self.W)
-        self.linear3 =nn.ModuleList([nn.Linear(
+        self.linear3 = nn.ModuleList([nn.Linear(
             self.W+self.xins, self.W)]+[nn.Linear(self.W, self.W) for i in range(self.mlp_num % 2-1)])
-        self.linear_sigma=nn.Linear(self.W,1)
-        self.linear_rgb=nn.ModuleList([nn.Linear(self.W+self.dins,self.W//2),nn.Linear(self.W//2,3)])
+        self.linear_sigma = nn.Linear(self.W, 1)
+        self.linear_rgb = nn.ModuleList(
+            [nn.Linear(self.W+self.dins, self.W//2), nn.Linear(self.W//2, 3)])
 
     def forward(self, x, d):
         x = posEmbed(x, self.xins//6)
         d = posEmbed(d, self.dins//4)
-        gamax=x
+        gamax = x
         for l in self.linear1:
-            x=l(x)
-            x=F.relu(x,inplace=True)
-        
-        x=self.linear2(x)
-        x=torch.cat((gamax,x),dim=-1)
+            x = l(x)
+            x = F.relu(x, inplace=True)
+
+        x = self.linear2(x)
+        x = torch.cat((gamax, x), dim=-1)
         for l in self.linear3:
-            x=l(x)
-            x=F.relu(x,inplace=True)
-        sigma=self.linear_sigma(x)
-        x=torch.cat([d,x],dim=-1)
-        x=self.linear_rgb[0](x)
-        x=F.relu(x,inplace=True)
-        rgb=self.linear_rgb[1](x)
-        output=[sigma,rgb]
+            x = l(x)
+            x = F.relu(x, inplace=True)
+        sigma = self.linear_sigma(x)
+        x = torch.cat([d, x], dim=-1)
+        x = self.linear_rgb[0](x)
+        x = F.relu(x, inplace=True)
+        rgb = self.linear_rgb[1](x)
+        output = [sigma, rgb]
         return output
 
 
+def raysGet(H, W, focal, c2w):
+    x, y = torch.meshgrid(torch.linspace(0, W-1, W), torch.linspace(0, H-1, H))
+    x, y = x.t(), y.t()
+    car_dir = torch.stack(((x-0.5*W)/focal, -(y-0.5*H) /
+                          focal, -torch.ones_like(x)), dim=-1)
+    rays_dir = torch.matmul(c2w[:3, :3], car_dir.unsqueeze(dim=-1)).squeeze(-1)
 
-model = Nerf()
-x = torch.arange(5*10*3).view(5,10, 3)
-d = torch.arange(5*10*2).view(5,10, 2)
-output=model(x, d)
-print(output[0].size())
-print(output[1].size())
+    rays_o = c2w[:3, -1].expand(rays_dir.size())
+    return rays_o, rays_dir
+
+
+def randomraysSample(rays_o, rays_dir, pts_num, d_near, d_far):
+    H, W, _ = rays_o.size()
+    t_bound = torch.linspace(d_near, d_far, pts_num)
+    t_val = torch.rand(H, W, pts_num)
+    t = t_bound+t_val
+    sample = rays_o.unsqueeze(-2)+t.unsqueeze(-1)*rays_dir.unsqueeze(-2)
+    return sample
