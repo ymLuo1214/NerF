@@ -78,7 +78,10 @@ class Nerf(nn.Module):
         return output
 
 
-def raysGet(H, W, focal, c2w):
+def raysGet(K,c2w):
+    H=K[0][2]
+    W=K[1][2]
+    focal=K[0][0]
     x, y = torch.meshgrid(torch.linspace(0, W-1, W), torch.linspace(0, H-1, H))
     x, y = x.t(), y.t()
     car_dir = torch.stack(((x-0.5*W)/focal, -(y-0.5*H) /
