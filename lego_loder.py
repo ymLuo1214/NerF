@@ -1,4 +1,4 @@
-from torch.utils import data
+from torch.utils.data import Dataset,DataLoader
 import os
 import natsort
 import json
@@ -8,22 +8,26 @@ from PIL import Image
 from torchvision import transforms
 import  matplotlib.pyplot as plt
 
-class MyDataset(data.Dataset):   #return data (N*3*H*W)
-    def __init__(self,root_dir,transform=None,is_train=True):
+class MyDataset(Dataset):   #return img,K,tfs
+    def __init__(self,root_dir,half_res=True,is_train=True):
         super().__init__()
         self.root_dir=root_dir
-        self.transform=transform
+        self.half_res=True
         self.is_train=is_train
         self.main_dir=self.root_dir+('train/' if is_train else 'test/')
         img_names=list(filter(lambda x:x.endswith('png'),os.listdir(self.main_dir)))
         self.imgs=natsort.natsorted(img_names)
         self.cam_fov,self.tfs=self._camparamGet()
+        if self.half_res:
+            self.transform=transforms.Compose([transforms.Resize((400,400)),transforms.ToTensor()])
+        else:
+            self.transform=transforms.Compose([transforms.ToTensor()])
 
     @staticmethod
     def jsonRead(path:str):
         with open(path,'r') as file:
             items=json.load(file)
-        cam_fov=items["camera_angle_x"]
+        cam_fov=torch.tensor(items["camera_angle_x"])
         print('Camera fov: %lf'%(cam_fov))
         tf_np=np.stack([frame["transform_matrix"] for frame in items["frames"]],axis=0)
         tfs=torch.from_numpy(tf_np)
@@ -31,7 +35,8 @@ class MyDataset(data.Dataset):   #return data (N*3*H*W)
 
     def _camparamGet(self):
         json_file="%stransforms_%s.json"%(self.root_dir,"train" if self.is_train else "test")
-        return MyDataset.jsonRead(json_file)
+        cam_fov,tfs=MyDataset.jsonRead(json_file)
+        return cam_fov,tfs
 
     def cameraGet(self):
         return self.cam_fov,self.tfs
@@ -43,7 +48,10 @@ class MyDataset(data.Dataset):   #return data (N*3*H*W)
         img_file=os.path.join(self.main_dir,self.imgs[index])
         image=Image.open(img_file).convert('RGB')
         img=self.transform(image)
-        return img,self.tfs[index]
+        H,W=img.shape[-2],img.shape[-1]
+        focal=W/(2*torch.tan(0.5*self.cam_fov))
+        K=torch.tensor([[focal,0,W//2],[0,focal,H//2],[0,0,1]])
+        return img,K,self.tfs[index]
 
     def datasetGet(self):
         result=[]
@@ -54,14 +62,14 @@ class MyDataset(data.Dataset):   #return data (N*3*H*W)
         return self.cam_fov,self.tfs,all_images
 
 if __name__=="__main__":
-    tf_func=transforms.Compose([transforms.Resize((400,400)),transforms.ToTensor(),])
-    dataset=MyDataset('./lego/',tf_func,is_train=True)
-    cam_fov,tfs,all_images=dataset.datasetGet()
-    print(tfs.size())
-    print(all_images.size())
-    for i in range(3):
-        plt.subplot(1,3,i+1)
-        plt.imshow(all_images[i*20].permute(1,2,0))
+    dataset=MyDataset('./lego/',half_res=True,is_train=True)
+    print(type(dataset))
+    trainloader=DataLoader(dataset,batch_size=8,shuffle=True,num_workers=4)
+    for i,(img,K,tfs) in enumerate(trainloader):
+        for i in range(3):
+            plt.subplot(1,3,i+1)
+            plt.imshow(img[i].permute(1,2,0))
+        break
     plt.show()
 
 
