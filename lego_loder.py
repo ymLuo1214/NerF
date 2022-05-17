@@ -30,7 +30,7 @@ class MyDataset(Dataset):   #return img,K,tfs
         cam_fov=torch.tensor(items["camera_angle_x"])
         print('Camera fov: %lf'%(cam_fov))
         tf_np=np.stack([frame["transform_matrix"] for frame in items["frames"]],axis=0)
-        tfs=torch.from_numpy(tf_np)
+        tfs=torch.from_numpy(tf_np).float()
         return cam_fov,tfs
 
     def _camparamGet(self):
@@ -48,10 +48,7 @@ class MyDataset(Dataset):   #return img,K,tfs
         img_file=os.path.join(self.main_dir,self.imgs[index])
         image=Image.open(img_file).convert('RGB')
         img=self.transform(image)
-        H,W=img.shape[-2],img.shape[-1]
-        focal=W/(2*torch.tan(0.5*self.cam_fov))
-        K=torch.tensor([[focal,0,W//2],[0,focal,H//2],[0,0,1]])
-        return img,K,self.tfs[index]
+        return img,self.tfs[index]
 
     def datasetGet(self):
         result=[]
@@ -65,10 +62,12 @@ if __name__=="__main__":
     dataset=MyDataset('./lego/',half_res=True,is_train=True)
     print(type(dataset))
     trainloader=DataLoader(dataset,batch_size=8,shuffle=True,num_workers=4)
-    for i,(img,K,tfs) in enumerate(trainloader):
+    for i,(img,tfs) in enumerate(trainloader):
         for i in range(3):
             plt.subplot(1,3,i+1)
             plt.imshow(img[i].permute(1,2,0))
+        print(img.size())
+        print(tfs.size())
         break
     plt.show()
 

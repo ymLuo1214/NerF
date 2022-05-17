@@ -59,7 +59,7 @@ if __name__ == '__main__':
     ])
     H,W=800,800
     camera_angle=torch.tensor([0.6911112070083618])
-    focal=W/(2*torch.tan(camera_angle))
+    focal=W/(2*torch.tan(0.5*camera_angle))
     rays_o,rays_dir=raysGet(800,800,focal,camera_config)
     sample = randomraysSample(rays_o, rays_dir, 10, 2, 6)
     view(sample, rays_o, rays_dir)
