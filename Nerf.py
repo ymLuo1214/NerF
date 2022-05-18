@@ -144,9 +144,3 @@ def colRender(d,sigma, RGB):
     weight=weight/weight_sum[...,None]
     return Cr,weight
 
-
-
-
-
-    return color
-
