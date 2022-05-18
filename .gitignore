@@ -1,3 +1,3 @@
-./lego
-./.vscode
-./__pycache__
+lego/
+.vscode/
+**/__pycache__
