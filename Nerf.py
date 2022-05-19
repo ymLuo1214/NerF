@@ -100,11 +100,10 @@ def view(sample, rays_o, rays_dir,pt_fine=False):
     ax.set_ylabel('y')
     ax.set_zlabel('z')
     for i in range(0,B,2):
-        for j in range(0,H,200):
+        for j in range(0,H,80):
             for k in range(0,W,100):
                 ax.plot(rays[i, j, k,:, 0], rays[i, j,k, :, 1], rays[i, j, k,:, 2], linewidth=1)
                 ax.scatter(points[i, j,k, :, 0], points[i, j,k, :, 1], points[i, j, k,:, 2],s=2)
-        
         ax.scatter(origin[i,0,0, 0], origin[i,0,0, 1], origin[i,0,0,2],s=2)
     plt.show()
 
@@ -153,22 +152,25 @@ def colRender(d,sigma, RGB):
     weight/=weight_sum[...,None]
     return Cr,weight
 
-def invSample(PDF,pts_num,rays_o,rays_dir,rays_dist,near,far):
+def invSample(PDF,pts_num,rays_o,rays_dir,rays_dist,near,far,coarse_s,coarse_dist):
     IB,RB,pts=PDF.size()
     stride=(far-near)/pts
     CDF=torch.cumsum(PDF,-1)
     CDF=torch.cat([torch.zeros_like(CDF[:,:,:1]),CDF],dim=-1)
     sam=torch.rand(IB,RB,pts_num)
     below=torch.searchsorted(CDF,sam)
-    below=torch.min(below,pts*torch.ones_like(below))
+    below=torch.min(below,pts*torch.ones_like(below)-1)
     t0=(below-1)*stride
     t=(sam-torch.gather(CDF,-1,below-1))/torch.gather(PDF,-1,below-1)
     sample_t=t0+t
     rays_dirs=rays_dir
+    coarse_scale=coarse_dist/rays_dist
+    print(rays_dist)
     assert pts_num%pts==0
     for i in range(pts_num//pts-1):
         rays_dirs=torch.cat([rays_dirs,rays_dir],dim=-2)
     sample= rays_o[:,:,None,:]+sample_t.unsqueeze(-1)*rays_dirs
     sample_dist=(sample_t-1)*rays_dist
+    sample=torch.cat([coarse_s,sample],dim=-2)
     return sample,sample_dist
 

@@ -62,22 +62,20 @@ def train():
             # tfs=tfs.cuda()
             rays_ori, rays_dirs,rays_dists = raysGet(K, tfs)
             coarse_sample ,coarse_sample_dist =randomraysSample(rays_ori, rays_dirs,rays_dists, args.cpts_num, args.near, args.far)
-            view(coarse_sample,rays_ori,rays_dirs,pt_fine=False)
+            # view(coarse_sample,rays_ori,rays_dirs,pt_fine=False)
             rays_dirs=rays_dirs[:,:,:,None,:].expand(coarse_sample.size())
             coarse_sample_loader,rays_ori_loader,rays_dir_loader,rays_dist_loader,coarse_d_loader=raysBatchify(coarse_sample,rays_ori,rays_dirs,rays_dists,coarse_sample_dist,args.rays_batch) 
             for coarse_s,rays_o,rays_dir,rays_dist,coarse_dist in zip(coarse_sample_loader,rays_ori_loader,rays_dir_loader,rays_dist_loader,coarse_d_loader):
                 coarse_sigma, coarse_RGB=model_coarse(coarse_s,rays_dir)
                 Cr,weight=colRender(coarse_dist,coarse_sigma, coarse_RGB)
-                fine_sample,fine_sample_dist=invSample(weight,args.fpts_num,rays_o,rays_dir,rays_dist,args.near,args.far)
-                view(fine_sample,rays_o,rays_dir,pt_fine=True)
+                fine_sample,fine_sample_dist=invSample(weight,args.fpts_num,rays_o,rays_dir,rays_dist,args.near,args.far,coarse_s,coarse_dist)
+
+                # view(fine_sample,rays_o,rays_dir,pt_fine=True)
+                # fine_sample,fine_sample_dist=torch.cat([fine_sample,coarse_s],dim=-2)
+                # fine_sigma, fine_RGB = model_fine(fine_sample,rays_dir)
+                # fine_render = colRender(fine_sample_dist,fine_sigma, fine_RGB)
             break
         break
-           
-            
-            # fine_sample = invSample(coarse_sample, coarse_sigma, args.fpts_num)
-            # fine_sigma, fine_RGB = model_fine(fine_sample)
-            # # TODO:concat concat fine_render and coarse_render
-            # fine_render = cloRender(fine_sample, fine_sigma, fine_RGB)
             # loss = img2mse(fine_render, img)+img2mse(coarse_render, img)
             # loss.backward()
             # optimizer.step()
