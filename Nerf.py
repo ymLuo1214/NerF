@@ -80,9 +80,12 @@ def randomraysSample(rays_o, rays_dir, rays_d,pts_num, d_near, d_far):
     sample_d=(t-1)*rays_d
     return sample,sample_d
 
-def view(sample, rays_o, rays_dir):
+def view(sample, rays_o, rays_dir,pt_fine=False):
     scale = torch.linspace(0, 3.5, 2)
-    rays = rays_o[:,:,:,None,:]+scale.unsqueeze(-1)*rays_dir.unsqueeze(-2)
+    if not pt_fine:
+        rays = rays_o[:,:,:,None,:]+scale.unsqueeze(-1)*rays_dir.unsqueeze(-2)
+    else:
+        rays=rays_o[:,:,None,:]+scale.unsqueeze(-1)*rays_dir.unsqueeze(-2)
     rays = rays.numpy()
     origin = rays_o.numpy()
     points = sample.numpy()
@@ -97,50 +100,75 @@ def view(sample, rays_o, rays_dir):
     ax.set_ylabel('y')
     ax.set_zlabel('z')
     for i in range(0,B,2):
-        for j in range(0,H,80):
-            for k in range(0,W,80):
+        for j in range(0,H,200):
+            for k in range(0,W,100):
                 ax.plot(rays[i, j, k,:, 0], rays[i, j,k, :, 1], rays[i, j, k,:, 2], linewidth=1)
-                ax.scatter(points[i, j,k, :, 0], points[i, j,k, :, 1], points[i, j, k,:, 2],s=1)
+                ax.scatter(points[i, j,k, :, 0], points[i, j,k, :, 1], points[i, j, k,:, 2],s=2)
         
         ax.scatter(origin[i,0,0, 0], origin[i,0,0, 1], origin[i,0,0,2],s=2)
     plt.show()
 
-def raysBatchify(sample,rays_dir,sample_d,batch_size=1024)->list:
+def raysBatchify(sample,rays_ori,rays_dir,rays_dists,sample_d,batch_size=1024)->list:
     res_sample=[]
+    res_ori=[]
     res_dirs=[]
+    res_dists=[]
     res_d=[]
     B,H,W,pts,d=sample.size()
-    sample=sample.contiguous()
-    rays_dir=rays_dir.contiguous()
-    sample_d=sample_d.contiguous()
-    sample=sample.view(B,H*W,pts,d)
-    rays_dir=rays_dir.view(B,H*W,pts,d)
-    sample_d=sample_d.view(B,H*W,pts)
+    sample=sample.reshape((B,H*W,pts,d))
+    rays_ori=rays_ori.reshape((B,H*W,d))
+    rays_dir=rays_dir.reshape((B,H*W,pts,d))
+    rays_dists=rays_dists.reshape((B,H*W,1))
+    sample_d=sample_d.reshape((B,H*W,pts))
     group_num=(H*W)//batch_size
     if not (H*W)%batch_size==0:
         group_num+=1
     for i in range(group_num):
         if H*W-i*batch_size<batch_size:
            res_sample.append(sample[:,i*batch_size:,:,:])
+           res_ori.append(rays_ori[:,i*batch_size:,:])
            res_dirs.append(rays_dir[:,i*batch_size:,:,:])
+           res_dists.append(rays_dists[:,i*batch_size,:])
+           res_d.append(sample_d[:,i*batch_size,:])
            break 
         res_sample.append(sample[:,i*batch_size:(i+1)*batch_size,:,:])
+        res_ori.append(rays_ori[:,i*batch_size:(i+1)*batch_size,:])
         res_dirs.append(rays_dir[:,i*batch_size:(i+1)*batch_size,:,:])
+        res_dists.append(rays_dists[:,i*batch_size:(i+1)*batch_size,:])
         res_d.append(sample_d[:,i*batch_size:(i+1)*batch_size,:])
-    return res_sample,res_dirs,res_d
+    return res_sample,res_ori,res_dirs,res_dists,res_d
     
 def colRender(d,sigma, RGB):
     for i in range(d.shape[-1]-1,0,-1):
-        d[...,i]=d[...,i]-d[...,i-1]
+        d[...,i]-=d[...,i-1]
     prob=-d*sigma
     Ti=prob
     for i in range(1,prob.shape[-1]):
-        Ti[...,i]=Ti[...,i]+Ti[...,i-1]
+        Ti[...,i]+=Ti[...,i-1]
     Ti=torch.exp(Ti)
     prob=1-torch.exp(prob)
-    weight=Ti*prob
+    weight=Ti*prob+1e-4
     weight_sum=torch.sum(weight,dim=-1)
     Cr=RGB*weight[...,None]
-    weight=weight/weight_sum[...,None]
+    weight/=weight_sum[...,None]
     return Cr,weight
+
+def invSample(PDF,pts_num,rays_o,rays_dir,rays_dist,near,far):
+    IB,RB,pts=PDF.size()
+    stride=(far-near)/pts
+    CDF=torch.cumsum(PDF,-1)
+    CDF=torch.cat([torch.zeros_like(CDF[:,:,:1]),CDF],dim=-1)
+    sam=torch.rand(IB,RB,pts_num)
+    below=torch.searchsorted(CDF,sam)
+    below=torch.min(below,pts*torch.ones_like(below))
+    t0=(below-1)*stride
+    t=(sam-torch.gather(CDF,-1,below-1))/torch.gather(PDF,-1,below-1)
+    sample_t=t0+t
+    rays_dirs=rays_dir
+    assert pts_num%pts==0
+    for i in range(pts_num//pts-1):
+        rays_dirs=torch.cat([rays_dirs,rays_dir],dim=-2)
+    sample= rays_o[:,:,None,:]+sample_t.unsqueeze(-1)*rays_dirs
+    sample_dist=(sample_t-1)*rays_dist
+    return sample,sample_dist
 

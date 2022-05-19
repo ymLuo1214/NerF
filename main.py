@@ -60,16 +60,16 @@ def train():
             # optimizer.zero_grad()
             # img=img.cuda()
             # tfs=tfs.cuda()
-            rays_o, rays_dir,rays_d = raysGet(K, tfs)
-            coarse_sample ,coarse_sample_d =randomraysSample(rays_o, rays_dir,rays_d, args.cpts_num, args.near, args.far)
-            # view(coarse_sample,rays_o,rays_dir)
-            rays_dir=rays_dir[:,:,:,None,:].expand(coarse_sample.size())
-            coarse_sample_loader,rays_dir_loader,coarse_d_loader=raysBatchify(coarse_sample,rays_dir,coarse_sample_d,args.rays_batch)
-            for coarse_s,rays_d,coarse_d in zip(coarse_sample_loader,rays_dir_loader,coarse_d_loader):
-                coarse_sigma, coarse_RGB=model_coarse(coarse_s,rays_d)
-                Cr,weight=colRender(coarse_d,coarse_sigma, coarse_RGB)
-                print(torch.sum(weight,dim=-1))
-                break
+            rays_ori, rays_dirs,rays_dists = raysGet(K, tfs)
+            coarse_sample ,coarse_sample_dist =randomraysSample(rays_ori, rays_dirs,rays_dists, args.cpts_num, args.near, args.far)
+            view(coarse_sample,rays_ori,rays_dirs,pt_fine=False)
+            rays_dirs=rays_dirs[:,:,:,None,:].expand(coarse_sample.size())
+            coarse_sample_loader,rays_ori_loader,rays_dir_loader,rays_dist_loader,coarse_d_loader=raysBatchify(coarse_sample,rays_ori,rays_dirs,rays_dists,coarse_sample_dist,args.rays_batch) 
+            for coarse_s,rays_o,rays_dir,rays_dist,coarse_dist in zip(coarse_sample_loader,rays_ori_loader,rays_dir_loader,rays_dist_loader,coarse_d_loader):
+                coarse_sigma, coarse_RGB=model_coarse(coarse_s,rays_dir)
+                Cr,weight=colRender(coarse_dist,coarse_sigma, coarse_RGB)
+                fine_sample,fine_sample_dist=invSample(weight,args.fpts_num,rays_o,rays_dir,rays_dist,args.near,args.far)
+                view(fine_sample,rays_o,rays_dir,pt_fine=True)
             break
         break
            
