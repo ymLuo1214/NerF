@@ -1,4 +1,3 @@
-from re import X
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -114,18 +113,20 @@ def view(sample, rays_o, rays_dir,pt_fine=False):
                 ax.plot(rays[i, j, :, 0], rays[i, j, :, 1], rays[i, j, :, 2], linewidth=1)
     plt.show()
 
-def raysBatchify(sample,rays_ori,rays_dir,rays_dists,sample_d,batch_size=1024)->list:
+def raysBatchify(sample,rays_ori,rays_dir,rays_dists,sample_d,img,batch_size=1024)->list:
     res_sample=[]
     res_ori=[]
     res_dirs=[]
     res_dists=[]
     res_d=[]
+    res_img=[]
     B,H,W,pts,d=sample.size()
     sample=sample.reshape((B,H*W,pts,d))
     rays_ori=rays_ori.reshape((B,H*W,d))
     rays_dir=rays_dir.reshape((B,H*W,pts,d))
     rays_dists=rays_dists.reshape((B,H*W,1))
     sample_d=sample_d.reshape((B,H*W,pts))
+    img=img.reshape((B,3,H*W))
     group_num=(H*W)//batch_size
     if not (H*W)%batch_size==0:
         group_num+=1
@@ -136,19 +137,20 @@ def raysBatchify(sample,rays_ori,rays_dir,rays_dists,sample_d,batch_size=1024)->
            res_dirs.append(rays_dir[:,i*batch_size:,:,:])
            res_dists.append(rays_dists[:,i*batch_size,:])
            res_d.append(sample_d[:,i*batch_size,:])
+           res_img.append(img[:,:,i*batch_size])
            break 
         res_sample.append(sample[:,i*batch_size:(i+1)*batch_size,:,:])
         res_ori.append(rays_ori[:,i*batch_size:(i+1)*batch_size,:])
         res_dirs.append(rays_dir[:,i*batch_size:(i+1)*batch_size,:,:])
         res_dists.append(rays_dists[:,i*batch_size:(i+1)*batch_size,:])
         res_d.append(sample_d[:,i*batch_size:(i+1)*batch_size,:])
-    return res_sample,res_ori,res_dirs,res_dists,res_d
+        res_img.append(img[:,:,i*batch_size:(i+1)*batch_size])
+    return res_sample,res_ori,res_dirs,res_dists,res_d,res_img
     
 def colRender(d,rays_dist,sigma, RGB):
     B,N,pts=d.size()
     diff=torch.cat([rays_dist,d],dim=-1)
-    d=d-diff[:,:,:-1]
-    prob=-d*sigma
+    prob=-(d-diff[:,:,:-1])*sigma
     Ti=prob
     for i in range(1,prob.shape[-1]):
         Ti[...,i]+=Ti[...,i-1]
@@ -156,11 +158,11 @@ def colRender(d,rays_dist,sigma, RGB):
     prob=1-torch.exp(prob)
     weight=Ti*prob+1e-4
     weight_sum=torch.sum(weight,dim=-1)
-    Cr=RGB*weight[...,None]
-    weight/=weight_sum[...,None]
+    Cr=RGB * weight[...,None]
+    weight=weight/weight_sum[...,None]
     return Cr,weight
 
-def invSample(PDF,pts_num,rays_o,rays_dirs,rays_dist,near,far,coarse_s,coarse_dist):
+def invSample(PDF,pts_num,rays_o,rays_dirs,rays_dist,near,far,coarse_dist):
     IB,RB,pts=PDF.size()
     stride=(far-near)/pts
     CDF=torch.cumsum(PDF,-1)
@@ -177,8 +179,18 @@ def invSample(PDF,pts_num,rays_o,rays_dirs,rays_dist,near,far,coarse_s,coarse_di
     coarse_scale=coarse_dist/rays_dist
     sample_t=torch.cat([sample_t,coarse_scale],dim=-1)
     sample_t=torch.sort(sample_t,dim=-1).values
-    rays_dir=rays_dirs[:,:,0,:].unsqueeze(-2).expand([IB,RB,pts+pts_num,3])
+    rays_dir=rays_dirs[:,:,0,:]
+    rays_dir=rays_dir.unsqueeze(-2).expand([IB,RB,pts+pts_num,3])
     sample= rays_o[:,:,None,:]+sample_t.unsqueeze(-1)*rays_dir
     sample_dist=sample_t*rays_dist
-    return sample,sample_dist
+    return sample,sample_dist,rays_dir
+
+def img2mse(Cr,pixel):
+    pixel=pixel.permute((0,2,1))
+    loss=Cr-pixel[:,:,None,:]
+    loss*=loss
+    loss=torch.sqrt(torch.sum(loss,dim=-1))
+    loss=torch.sum(loss)
+    return loss
+
 

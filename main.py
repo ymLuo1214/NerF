@@ -20,7 +20,8 @@ parser.add_argument('--cpts_num', type=int, default=64,
                     help='numbers of coarse sample points')
 parser.add_argument('--fpts_num', type=int, default=128,
                     help='addtional numbers of fine sample points')
-parser.add_argument('--rays_batch',type=int,default=1024,help='batch_size of rays')
+parser.add_argument('--rays_batch', type=int, default=32,
+                    help='batch_size of rays')
 parser.add_argument('--near', type=float, default=2., help='z of near plane')
 parser.add_argument('--far', type=float, default=6., help='z of far plane')
 parser.add_argument('--xins', type=int, default=60,
@@ -36,19 +37,20 @@ args = parser.parse_args()
 #     print("CUDA not available.")
 #     exit(-1)
 
+
 def train():
     train_data = MyDataset(
         root_dir='./lego/', half_res=args.half_res, is_train=args.is_train)
 
     train_loder = DataLoader(train_data, batch_size=1,
-                             shuffle=True, num_workers=4)
+                             shuffle=False, num_workers=4)
     H, W = 800, 800
     focal = W/(2*torch.tan(0.5*train_data.cam_fov))
     K = torch.tensor([[focal, 0, W//2], [0, focal, H//2], [0, 0, 1]])
-    model_coarse=Nerf(args)
-    model_fine=Nerf(args)
-    grad_vars=list(model_coarse.parameters())
-    grad_vars+=list(model_fine.parameters())
+    model_coarse = Nerf(args)
+    model_fine = Nerf(args)
+    grad_vars = list(model_coarse.parameters())
+    grad_vars += list(model_fine.parameters())
     optimizer = torch.optim.Adam(
         params=grad_vars, lr=args.lr)
     for i in range(args.epoch):
@@ -60,27 +62,28 @@ def train():
             # optimizer.zero_grad()
             # img=img.cuda()
             # tfs=tfs.cuda()
-            rays_ori, rays_dirs,rays_dists = raysGet(K, tfs)
-            coarse_sample ,coarse_sample_dist =randomraysSample(rays_ori, rays_dirs,rays_dists, args.cpts_num, args.near, args.far)
+            rays_ori, rays_dirs, rays_dists = raysGet(K, tfs)
+            coarse_sample, coarse_sample_dist = randomraysSample(
+                rays_ori, rays_dirs, rays_dists, args.cpts_num, args.near, args.far)
             # view(coarse_sample,rays_ori,rays_dirs,pt_fine=False)
-            rays_dirs=rays_dirs[:,:,:,None,:].expand(coarse_sample.size())
-            coarse_sample_loader,rays_ori_loader,rays_dir_loader,rays_dist_loader,coarse_d_loader=raysBatchify(coarse_sample,rays_ori,rays_dirs,rays_dists,coarse_sample_dist,args.rays_batch) 
-            for coarse_s,rays_o,rays_dir,rays_dist,coarse_dist in zip(coarse_sample_loader,rays_ori_loader,rays_dir_loader,rays_dist_loader,coarse_d_loader):         
-                coarse_sigma, coarse_RGB=model_coarse(coarse_s,rays_dir)
-                Cr,weight=colRender(coarse_dist,rays_dist,coarse_sigma, coarse_RGB)
-                fine_sample,fine_sample_dist=invSample(weight,args.fpts_num,rays_o,rays_dir,rays_dist,args.near,args.far,coarse_s,coarse_dist)
-                view(fine_sample,rays_o,rays_dir,pt_fine=True)
-                # fine_sample,fine_sample_dist=torch.cat([fine_sample,coarse_s],dim=-2)
-                # fine_sigma, fine_RGB = model_fine(fine_sample,rays_dir)
-                # fine_render = colRender(fine_sample_dist,fine_sigma, fine_RGB)
+            rays_dirs = rays_dirs[:, :, :, None,:].expand(coarse_sample.size())
+            coarse_sample_loader, rays_ori_loader, rays_dir_loader, rays_dist_loader, coarse_d_loader,pixel_loader = raysBatchify(coarse_sample, rays_ori, rays_dirs, rays_dists, coarse_sample_dist, img,args.rays_batch)
+            for coarse_s, rays_o, rays_dir, rays_dist, coarse_dist ,pixel in zip(coarse_sample_loader, rays_ori_loader, rays_dir_loader, rays_dist_loader, coarse_d_loader,pixel_loader):
+                coarse_sigma, coarse_RGB = model_coarse(coarse_s, rays_dir)
+                coarse_Cr, weight = colRender(coarse_dist, rays_dist, coarse_sigma, coarse_RGB)
+                fine_sample, fine_sample_dist, rays_dir_fine = invSample( weight, args.fpts_num, rays_o, rays_dir, rays_dist, args.near, args.far, coarse_dist)
+                # view(fine_sample,rays_o,rays_dir,pt_fine=True)
+                fine_sigma, fine_RGB = model_fine(fine_sample, rays_dir_fine)
+                fine_cr, _ = colRender(fine_sample_dist, rays_dist, fine_sigma, fine_RGB)
+                loss = torch.sum(fine_cr)#img2mse(fine_cr, pixel)
+                loss.backward()
+                optimizer.step()
+                new_lr = args.lr*(0.1**(i/args.epoch))
+                for param in optimizer.param_groups:
+                    param['lr'] = new_lr
             break
         break
-            # loss = img2mse(fine_render, img)+img2mse(coarse_render, img)
-            # loss.backward()
-            # optimizer.step()
-            # new_lr = args.lr*(0.1**(i/args.epoch))
-            # for param in optimizer.param_groups:
-            #     param['lr'] = new_lr
 
-if __name__=='__main__':
+
+if __name__ == '__main__':
     train()
