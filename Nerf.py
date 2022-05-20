@@ -77,7 +77,7 @@ def randomraysSample(rays_o, rays_dir, rays_d,pts_num, d_near, d_far):
     t_val=torch.sort(t_val,dim=-1).values
     t = t_bound+t_val
     sample = rays_o[:,:,:,None,:]+t.unsqueeze(-1)*rays_dir.unsqueeze(-2)
-    sample_d=(t-1)*rays_d
+    sample_d=t*rays_d
     return sample,sample_d
 
 def view(sample, rays_o, rays_dir,pt_fine=False):
@@ -85,13 +85,14 @@ def view(sample, rays_o, rays_dir,pt_fine=False):
     if not pt_fine:
         rays = rays_o[:,:,:,None,:]+scale.unsqueeze(-1)*rays_dir.unsqueeze(-2)
     else:
-        rays=rays_o[:,:,None,:]+scale.unsqueeze(-1)*rays_dir.unsqueeze(-2)
+        rays=rays_o[:,:,None,:]+scale.unsqueeze(-1)*rays_dir[:,:,0,:].unsqueeze(-2)
     rays = rays.numpy()
     origin = rays_o.numpy()
-    points = sample.numpy()
-
-    B, H,W, pts, _ = points.shape
-    print(B)
+    points = sample.detach().numpy()
+    if not pt_fine:
+        B, H,W, pts, _ = points.shape
+    else:
+        B,N,pts,_=points.shape
     assert (B%2==0 or B==1)
     fig = plt.figure('graph')
     ax = fig.add_subplot(111, projection='3d')
@@ -99,12 +100,18 @@ def view(sample, rays_o, rays_dir,pt_fine=False):
     ax.set_xlabel('x')
     ax.set_ylabel('y')
     ax.set_zlabel('z')
-    for i in range(0,B,2):
-        for j in range(0,H,80):
-            for k in range(0,W,100):
-                ax.plot(rays[i, j, k,:, 0], rays[i, j,k, :, 1], rays[i, j, k,:, 2], linewidth=1)
-                ax.scatter(points[i, j,k, :, 0], points[i, j,k, :, 1], points[i, j, k,:, 2],s=2)
-        ax.scatter(origin[i,0,0, 0], origin[i,0,0, 1], origin[i,0,0,2],s=2)
+    if not pt_fine:
+        for i in range(0,B,2):
+            for j in range(0,H,80):
+                for k in range(0,W,100):
+                    ax.plot(rays[i, j, k,:, 0], rays[i, j,k, :, 1], rays[i, j, k,:, 2], linewidth=1)
+                    ax.scatter(points[i, j,k, :, 0], points[i, j,k, :, 1], points[i, j, k,:, 2],s=2)
+            ax.scatter(origin[i,0,0, 0], origin[i,0,0, 1], origin[i,0,0,2],s=2)
+    else:
+        for i in range(0,B,2):
+            for j in range(0,N,64):
+                ax.scatter(points[i, j, :, 0], points[i, j, :, 1], points[i, j, :, 2],s=2)
+                ax.plot(rays[i, j, :, 0], rays[i, j, :, 1], rays[i, j, :, 2], linewidth=1)
     plt.show()
 
 def raysBatchify(sample,rays_ori,rays_dir,rays_dists,sample_d,batch_size=1024)->list:
@@ -137,9 +144,10 @@ def raysBatchify(sample,rays_ori,rays_dir,rays_dists,sample_d,batch_size=1024)->
         res_d.append(sample_d[:,i*batch_size:(i+1)*batch_size,:])
     return res_sample,res_ori,res_dirs,res_dists,res_d
     
-def colRender(d,sigma, RGB):
-    for i in range(d.shape[-1]-1,0,-1):
-        d[...,i]-=d[...,i-1]
+def colRender(d,rays_dist,sigma, RGB):
+    B,N,pts=d.size()
+    diff=torch.cat([rays_dist,d],dim=-1)
+    d=d-diff[:,:,:-1]
     prob=-d*sigma
     Ti=prob
     for i in range(1,prob.shape[-1]):
@@ -152,25 +160,25 @@ def colRender(d,sigma, RGB):
     weight/=weight_sum[...,None]
     return Cr,weight
 
-def invSample(PDF,pts_num,rays_o,rays_dir,rays_dist,near,far,coarse_s,coarse_dist):
+def invSample(PDF,pts_num,rays_o,rays_dirs,rays_dist,near,far,coarse_s,coarse_dist):
     IB,RB,pts=PDF.size()
     stride=(far-near)/pts
     CDF=torch.cumsum(PDF,-1)
     CDF=torch.cat([torch.zeros_like(CDF[:,:,:1]),CDF],dim=-1)
     sam=torch.rand(IB,RB,pts_num)
-    below=torch.searchsorted(CDF,sam)
-    below=torch.min(below,pts*torch.ones_like(below)-1)
-    t0=(below-1)*stride
-    t=(sam-torch.gather(CDF,-1,below-1))/torch.gather(PDF,-1,below-1)
+    below=torch.searchsorted(CDF,sam,right=True)-1
+    t0=below*stride
+    CDF=CDF.unsqueeze(-1).expand(list(CDF.shape)+[pts_num])
+    PDF=PDF.unsqueeze(-1).expand(list(PDF.shape)+[pts_num])
+    below=below.unsqueeze(-2)
+    t=(sam.unsqueeze(-2)-torch.gather(CDF,-2,below))/torch.gather(PDF,-2,below)
+    t=t.squeeze(-2)
     sample_t=t0+t
-    rays_dirs=rays_dir
     coarse_scale=coarse_dist/rays_dist
-    print(rays_dist)
-    assert pts_num%pts==0
-    for i in range(pts_num//pts-1):
-        rays_dirs=torch.cat([rays_dirs,rays_dir],dim=-2)
-    sample= rays_o[:,:,None,:]+sample_t.unsqueeze(-1)*rays_dirs
-    sample_dist=(sample_t-1)*rays_dist
-    sample=torch.cat([coarse_s,sample],dim=-2)
+    sample_t=torch.cat([sample_t,coarse_scale],dim=-1)
+    sample_t=torch.sort(sample_t,dim=-1).values
+    rays_dir=rays_dirs[:,:,0,:].unsqueeze(-2).expand([IB,RB,pts+pts_num,3])
+    sample= rays_o[:,:,None,:]+sample_t.unsqueeze(-1)*rays_dir
+    sample_dist=sample_t*rays_dist
     return sample,sample_dist
 
