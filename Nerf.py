@@ -166,7 +166,7 @@ def colRender(sample_dist,rays_dist,sigma, RGB):
     Ti=torch.exp(Ti)
     prob=1-torch.exp(prob)
     weight=Ti*prob+1e-4
-    Cr=RGB * weight[...,None]
+    Cr=torch.sum(RGB * weight[...,None],dim=-2)
     weight_sum=torch.sum(weight,dim=-1)
     weight=weight/weight_sum[...,None]
     """
@@ -202,4 +202,5 @@ def invSample(PDF,pts_num,rays_o,rays_dirs,rays_dist,near,far,coarse_dist):
     rays_dir: IB*RB*P*3
     """
     return sample,sample_dist,rays_dir
+
 

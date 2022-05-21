@@ -12,7 +12,7 @@ class MyDataset(Dataset):   #return img,K,tfs
     def __init__(self,root_dir,half_res=True,is_train=True):
         super().__init__()
         self.root_dir=root_dir
-        self.half_res=True
+        self.half_res=half_res
         self.is_train=is_train
         self.main_dir=self.root_dir+('train/' if is_train else 'test/')
         img_names=list(filter(lambda x:x.endswith('png'),os.listdir(self.main_dir)))
@@ -65,9 +65,13 @@ if __name__=="__main__":
     for i,(img,tfs) in enumerate(trainloader):
         for i in range(3):
             plt.subplot(1,3,i+1)
+            pic_name='picture/'+str(i)+'.png'
+            plt.savefig(pic_name)
             plt.imshow(img[i].permute(1,2,0))
+            
         print(img.size())
         print(tfs.size())
         break
     plt.show()
+
 
