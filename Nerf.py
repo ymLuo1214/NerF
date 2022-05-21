@@ -31,8 +31,7 @@ class Nerf(nn.Module):
         self.linear2 = nn.ModuleList([nn.Linear(
             self.W+self.xins, self.W)]+[nn.Linear(self.W, self.W) for i in range(self.mlps //2)])
         self.linear_sigma = nn.Linear(self.W, 1)
-        self.linear_rgb = nn.ModuleList(
-            [nn.Linear(self.W+self.dins, self.W//2), nn.Linear(self.W//2, 3)])
+        self.linear_rgb = nn.ModuleList([nn.Linear(self.W+self.dins, self.W//2), nn.Linear(self.W//2, 3)])
 
     def forward(self, x, d): #x:B*R*pts*3
         x = posEmbed(x, self.xins//6)   
@@ -62,32 +61,42 @@ def raysGet(K,c2w):
     focal=float(K[0][0])
     x, y = torch.meshgrid(torch.linspace(0, W-1, W), torch.linspace(0, H-1, H))
     x, y = x.t(), y.t()
-    car_dir = torch.stack(((x-0.5*W)/focal, -(y-0.5*H) /focal, -torch.ones_like(x)), dim=-1)
-    rays_dir = torch.matmul(c2w[:,None,None,:3, :3], car_dir.unsqueeze(dim=-1)).squeeze(-1)
-    rays_d=torch.sqrt(torch.matmul(car_dir[:,:,None,:],car_dir[:,:,:,None])).squeeze(-1)
+    cam_dir = torch.stack(((x-0.5*W)/focal, -(y-0.5*H) /focal, -torch.ones_like(x)), dim=-1).cuda()
+    rays_dir = torch.matmul(c2w[:,None,None,:3, :3], cam_dir.unsqueeze(dim=-1)).squeeze(-1)
+    rays_dist=torch.sqrt(torch.matmul(cam_dir[:,:,None,:],cam_dir[:,:,:,None])).squeeze(-1)
     rays_o = c2w[:,None,None,:3, -1].expand(rays_dir.size())
-    return rays_o, rays_dir,rays_d
+    """
+    rays_o : B*H*W*3
+    rays_dir : B*H*W*3
+    rays_dist : H*W*1 
+    """
+    return rays_o, rays_dir,rays_dist
 
 
-def randomraysSample(rays_o, rays_dir, rays_d,pts_num, d_near, d_far):
+def randomraysSample(rays_o, rays_dir, rays_dist,pts_num, d_near, d_far):
     B,H, W, _ = rays_o.size()
     t_bound = torch.linspace(d_near, d_far, pts_num)
-    t_val = torch.rand(B,H, W, pts_num)  #ToDo:sort in pts_num dimension
+    t_val = torch.rand(B,H, W, pts_num)  
     t_val=torch.sort(t_val,dim=-1).values
     t = t_bound+t_val
+    t=t.cuda()
     sample = rays_o[:,:,:,None,:]+t.unsqueeze(-1)*rays_dir.unsqueeze(-2)
-    sample_d=t*rays_d
+    sample_d=t*rays_dist
+    """
+    sample:B*H*W*pts*3
+    sample_d: B*H*W*pts
+    """
     return sample,sample_d
 
 def view(sample, rays_o, rays_dir,pt_fine=False):
-    scale = torch.linspace(0, 3.5, 2)
+    scale = torch.linspace(0, 3.5, 2).cuda()
     if not pt_fine:
         rays = rays_o[:,:,:,None,:]+scale.unsqueeze(-1)*rays_dir.unsqueeze(-2)
     else:
         rays=rays_o[:,:,None,:]+scale.unsqueeze(-1)*rays_dir[:,:,0,:].unsqueeze(-2)
-    rays = rays.numpy()
-    origin = rays_o.numpy()
-    points = sample.detach().numpy()
+    rays = rays.cpu().numpy()
+    origin = rays_o.cpu().numpy()
+    points = sample.cpu().detach().numpy()
     if not pt_fine:
         B, H,W, pts, _ = points.shape
     else:
@@ -124,7 +133,8 @@ def raysBatchify(sample,rays_ori,rays_dir,rays_dists,sample_d,img,batch_size=102
     sample=sample.reshape((B,H*W,pts,d))
     rays_ori=rays_ori.reshape((B,H*W,d))
     rays_dir=rays_dir.reshape((B,H*W,pts,d))
-    rays_dists=rays_dists.reshape((B,H*W,1))
+    rays_dists=rays_dists.unsqueeze(0).expand((B,H,W,1))
+    rays_dists=rays_dists.reshape((B,H*W))
     sample_d=sample_d.reshape((B,H*W,pts))
     img=img.reshape((B,3,H*W))
     group_num=(H*W)//batch_size
@@ -135,31 +145,34 @@ def raysBatchify(sample,rays_ori,rays_dir,rays_dists,sample_d,img,batch_size=102
            res_sample.append(sample[:,i*batch_size:,:,:])
            res_ori.append(rays_ori[:,i*batch_size:,:])
            res_dirs.append(rays_dir[:,i*batch_size:,:,:])
-           res_dists.append(rays_dists[:,i*batch_size,:])
-           res_d.append(sample_d[:,i*batch_size,:])
-           res_img.append(img[:,:,i*batch_size])
+           res_dists.append(rays_dists[:,i*batch_size:])
+           res_d.append(sample_d[:,i*batch_size:,:])
+           res_img.append(img[:,:,i*batch_size:])
            break 
         res_sample.append(sample[:,i*batch_size:(i+1)*batch_size,:,:])
         res_ori.append(rays_ori[:,i*batch_size:(i+1)*batch_size,:])
         res_dirs.append(rays_dir[:,i*batch_size:(i+1)*batch_size,:,:])
-        res_dists.append(rays_dists[:,i*batch_size:(i+1)*batch_size,:])
+        res_dists.append(rays_dists[:,i*batch_size:(i+1)*batch_size])
         res_d.append(sample_d[:,i*batch_size:(i+1)*batch_size,:])
         res_img.append(img[:,:,i*batch_size:(i+1)*batch_size])
     return res_sample,res_ori,res_dirs,res_dists,res_d,res_img
     
-def colRender(d,rays_dist,sigma, RGB):
-    B,N,pts=d.size()
-    diff=torch.cat([rays_dist,d],dim=-1)
-    prob=-(d-diff[:,:,:-1])*sigma
+def colRender(sample_dist,rays_dist,sigma, RGB):
+    B,N,pts=sample_dist.size()
+    diff=torch.cat([rays_dist.unsqueeze(-1),sample_dist],dim=-1)
+    prob=-(sample_dist-diff[:,:,:-1])*sigma
     Ti=prob
-    for i in range(1,prob.shape[-1]):
-        Ti[...,i]+=Ti[...,i-1]
+    Ti=torch.cumsum(Ti,-1)
     Ti=torch.exp(Ti)
     prob=1-torch.exp(prob)
     weight=Ti*prob+1e-4
-    weight_sum=torch.sum(weight,dim=-1)
     Cr=RGB * weight[...,None]
+    weight_sum=torch.sum(weight,dim=-1)
     weight=weight/weight_sum[...,None]
+    """
+    Cr：IB*RB*pts*3
+    weight: IB*RB*pts
+    """
     return Cr,weight
 
 def invSample(PDF,pts_num,rays_o,rays_dirs,rays_dist,near,far,coarse_dist):
@@ -167,7 +180,7 @@ def invSample(PDF,pts_num,rays_o,rays_dirs,rays_dist,near,far,coarse_dist):
     stride=(far-near)/pts
     CDF=torch.cumsum(PDF,-1)
     CDF=torch.cat([torch.zeros_like(CDF[:,:,:1]),CDF],dim=-1)
-    sam=torch.rand(IB,RB,pts_num)
+    sam=torch.rand(IB,RB,pts_num).cuda()
     below=torch.searchsorted(CDF,sam,right=True)-1
     t0=below*stride
     CDF=CDF.unsqueeze(-1).expand(list(CDF.shape)+[pts_num])
@@ -176,21 +189,17 @@ def invSample(PDF,pts_num,rays_o,rays_dirs,rays_dist,near,far,coarse_dist):
     t=(sam.unsqueeze(-2)-torch.gather(CDF,-2,below))/torch.gather(PDF,-2,below)
     t=t.squeeze(-2)
     sample_t=t0+t
-    coarse_scale=coarse_dist/rays_dist
+    coarse_scale=coarse_dist/rays_dist.unsqueeze(-1)
     sample_t=torch.cat([sample_t,coarse_scale],dim=-1)
     sample_t=torch.sort(sample_t,dim=-1).values
     rays_dir=rays_dirs[:,:,0,:]
     rays_dir=rays_dir.unsqueeze(-2).expand([IB,RB,pts+pts_num,3])
     sample= rays_o[:,:,None,:]+sample_t.unsqueeze(-1)*rays_dir
-    sample_dist=sample_t*rays_dist
+    sample_dist=sample_t*rays_dist.unsqueeze(-1)
+    """
+    sample: IB*RB*P*3
+    sample_dist: IB*RB*P
+    rays_dir: IB*RB*P*3
+    """
     return sample,sample_dist,rays_dir
-
-def img2mse(Cr,pixel):
-    pixel=pixel.permute((0,2,1))
-    loss=Cr-pixel[:,:,None,:]
-    loss*=loss
-    loss=torch.sqrt(torch.sum(loss,dim=-1))
-    loss=torch.sum(loss)
-    return loss
-
 
