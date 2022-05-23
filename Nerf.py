@@ -1,3 +1,4 @@
+from xml.etree.ElementTree import PI
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -9,13 +10,12 @@ import numpy as np
 
 def posEmbed(x: torch.tensor, L: int) -> torch.tensor: 
     result = []
-    B, N = x.shape[0], x.shape[1]
     freq = 2.**torch.linspace(0, L-1, L)
     func = [torch.cos, torch.sin]
     for fre in freq:
         for f in func:
             result.append(f(fre*x))
-    return torch.cat(result, dim=-1)
+    return torch.cat([x]+result, dim=-1)
 
 class Nerf(nn.Module):
     def __init__(self, args):
@@ -53,6 +53,15 @@ class Nerf(nn.Module):
         rgb=F.relu(rgb)
         output = [sigma, rgb]
         return output
+    
+    def loadFromFile(self, load_path:str):
+        save = torch.load(load_path)   
+        save_model = save['state_dict']
+        save_model_new={}
+        for key,value in save_model.items():
+            save_model_new[key[7:]]=value            
+        self.load_state_dict(save_model_new) 
+        print("NeRF Model loaded from '%s'"%(load_path))
 
 
 def raysGet(K,c2w):
@@ -202,5 +211,4 @@ def invSample(PDF,pts_num,rays_o,rays_dirs,rays_dist,near,far,coarse_dist):
     rays_dir: IB*RB*P*3
     """
     return sample,sample_dist,rays_dir
-
 
