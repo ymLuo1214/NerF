@@ -56,11 +56,8 @@ class Nerf(nn.Module):
     
     def loadFromFile(self, load_path:str):
         save = torch.load(load_path)   
-        save_model = save['state_dict']
-        save_model_new={}
-        for key,value in save_model.items():
-            save_model_new[key[7:]]=value            
-        self.load_state_dict(save_model_new) 
+        save_model = save['state_dict']       
+        self.load_state_dict(save_model) 
         print("NeRF Model loaded from '%s'"%(load_path))
 
 
@@ -211,4 +208,5 @@ def invSample(PDF,pts_num,rays_o,rays_dirs,rays_dist,near,far,coarse_dist):
     rays_dir: IB*RB*P*3
     """
     return sample,sample_dist,rays_dir
+
 

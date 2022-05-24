@@ -9,11 +9,14 @@ import os
 from datetime import datetime
 import torch.nn as nn
 from torchvision.utils import save_image
+from torch.cuda import amp
+from timm.utils import NativeScaler
+
 parser = configargparse.ArgumentParser()
 parser.add_argument('--half_res', type=bool, default=True,
                     help='resolution of 400')
-parser.add_argument('--epoch', type=int, default=10000, help='total epochs')
-parser.add_argument('--lr', type=float, default=5e-4,
+parser.add_argument('--epoch', type=int, default=150000, help='total epochs')
+parser.add_argument('--lr', type=float, default=1e-4,
                     help='initial learning rate')
 parser.add_argument('--cpts_num', type=int, default=64,
                     help='numbers of coarse sample points')
@@ -51,6 +54,7 @@ def main():
     train_loder = DataLoader(train_data, batch_size=1,shuffle=True, num_workers=4)
     test_data=MyDataset(root_dir='./lego/', half_res=args.half_res, is_train=False)
     test_loader=DataLoader(test_data, batch_size=1,shuffle=False, num_workers=4)
+    amp_scaler = NativeScaler()
     if args.half_res:
         H, W = 400, 400
     else:
@@ -58,10 +62,10 @@ def main():
     focal = W/(2*torch.tan(0.5*train_data.cam_fov))
     K = torch.tensor([[focal, 0, W], [0, focal, H], [0, 0, 1]])
     model_coarse = Nerf(args)
-    model_coarse.loadFromFile('./model/620model_c.tar')
+    model_coarse.loadFromFile('./model/300model_c.tar')
     model_coarse=model_coarse.cuda()
     model_fine = Nerf(args)
-    model_fine.loadFromFile('./model/620model_f.tar')
+    model_fine.loadFromFile('./model/300model_f.tar')
     model_fine=model_fine.cuda()
     grad_vars = list(model_coarse.parameters())
     grad_vars += list(model_fine.parameters())
@@ -91,17 +95,22 @@ def main():
                 num_train+=1
                 optimizer.zero_grad()
                 rays_dir_nor=rays_dir/rays_dir.norm(dim=-1,keepdim=True)
-                coarse_sigma, coarse_RGB = model_coarse(coarse_s, rays_dir_nor)
-                coarse_cr, weight = colRender(coarse_dist, rays_dist, coarse_sigma, coarse_RGB)
-                fine_sample, fine_sample_dist, rays_dir_fine = invSample( weight, args.fpts_num, rays_o, rays_dir_nor, rays_dist, args.near, args.far, coarse_dist)
-                # view(fine_sample,rays_o,rays_dir,pt_fine=True)
-                rays_dir_fine_nor=rays_dir_fine/rays_dir_fine.norm(dim=-1,keepdim=True)    
-                fine_sigma, fine_RGB = model_fine(fine_sample, rays_dir_fine_nor)
-                fine_cr, _ = colRender(fine_sample_dist, rays_dist, fine_sigma, fine_RGB)
-                pixel=pixel.permute((0,2,1))
-                loss = MSE(fine_cr, pixel)+MSE(coarse_cr,pixel)
-                loss.backward()
-                optimizer.step()
+                with amp.autocast():
+                    coarse_sigma, coarse_RGB = model_coarse(coarse_s, rays_dir_nor)
+                    coarse_cr, weight = colRender(coarse_dist, rays_dist, coarse_sigma, coarse_RGB)
+                    fine_sample, fine_sample_dist, rays_dir_fine = invSample( weight, args.fpts_num, rays_o, rays_dir_nor, rays_dist, args.near, args.far, coarse_dist)
+                    # view(fine_sample,rays_o,rays_dir,pt_fine=True)
+                    rays_dir_fine_nor=rays_dir_fine/rays_dir_fine.norm(dim=-1,keepdim=True)    
+                    fine_sigma, fine_RGB = model_fine(fine_sample, rays_dir_fine_nor)
+                    fine_cr, _ = colRender(fine_sample_dist, rays_dist, fine_sigma, fine_RGB)
+                    pixel=pixel.permute((0,2,1))
+                    loss = MSE(fine_cr, pixel)+MSE(coarse_cr,pixel)
+                if not amp_scaler is None:
+                    amp_scaler(loss, optimizer, clip_grad=None, parameters = grad_vars, create_graph = False)
+                else:
+                    loss.backward()
+                    optimizer.step()
+                
                 loss_float=float(loss.detach().cpu().numpy())
                 print("%d-th epoch,%d-th picture,%d-th rays_batch,loss%f:"%(i,j,I,loss_float))
                 train_loss=train_loss+loss_float
@@ -111,7 +120,7 @@ def main():
             writer.add_scalar('Loss/train/pic',train_loss,(i*100+j))
             model_coarse_save_path='./model/'+str((i*100+j))+'model_coarse.tar'
             model_fine_save_path='./model/'+str((i*100+j))+'model_fine.tar'
-            new_lr = args.lr*(0.1**((num_train)/args.epoch))
+            new_lr = args.lr*(0.1**((num_train//40)/args.epoch))
             for param in optimizer.param_groups:
                 param['lr'] = new_lr  
             if j%20==0:
@@ -148,7 +157,7 @@ def main():
                     break
                 pic=torch.cat(test_pic,dim=-2).squeeze(0)
                 pic=pic.contiguous().view(H,W,3).permute(2,0,1)
-                pic_name='picture1/'+str(i*100+j+620)+'.png'
+                pic_name='picture1/'+str(i*100+j+2960)+'.png'
                 save_image(pic,pic_name)
 
     writer.close()
