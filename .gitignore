@@ -1,3 +1,5 @@
 lego/
 .vscode/
 **/__pycache__
+git.py
+img/
