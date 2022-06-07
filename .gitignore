@@ -3,3 +3,16 @@ lego/
 **/__pycache__
 git.py
 img/
+logs/
+batch.png
+graph.png
+.idea/misc.xml
+.idea/modules.xml
+.idea/raw_Nerf.iml
+.idea/vcs.xml
+.idea/inspectionProfiles/profiles_settings.xml
+.vscode/settings.json
+.idea/.gitignore
+
+.gitignore
+batch.png

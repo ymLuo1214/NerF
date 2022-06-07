@@ -7,6 +7,7 @@ from cmath import pi
 import matplotlib.pyplot as plt
 from matplotlib import projections
 import numpy as np
+import random
 
 def posEmbed(x: torch.tensor, L: int) -> torch.tensor: 
     result = []
@@ -71,22 +72,24 @@ def raysGet(K,c2w):
     rays_dir = torch.matmul(c2w[:,None,None,:3, :3], cam_dir.unsqueeze(dim=-1)).squeeze(-1)
     rays_dist=torch.sqrt(torch.matmul(cam_dir[:,:,None,:],cam_dir[:,:,:,None])).squeeze(-1)
     rays_o = c2w[:,None,None,:3, -1].expand(rays_dir.size())
+    B,_,_,_ = rays_o.size()
     """
     rays_o : B*H*W*3
     rays_dir : B*H*W*3
     rays_dist : H*W*1 
     """
-    return rays_o, rays_dir,rays_dist
+    return rays_o.view(B,H*W,3), rays_dir.view(B,H*W,3),rays_dist.view(H*W,1)
 
 
 def randomraysSample(rays_o, rays_dir, rays_dist,pts_num, d_near, d_far):
-    B,H, W, _ = rays_o.size()
+    B,N, _ = rays_o.size()
     t_bound = torch.linspace(d_near, d_far, pts_num)
-    t_val = torch.rand(B,H, W, pts_num)  
+    t_val = torch.rand(B,N, pts_num)
+    t_val = torch.rand(B,N, pts_num)
     t_val=torch.sort(t_val,dim=-1).values
     t = t_bound+t_val
     t=t.cuda()
-    sample = rays_o[:,:,:,None,:]+t.unsqueeze(-1)*rays_dir.unsqueeze(-2)
+    sample = rays_o[:,:,None,:]+t.unsqueeze(-1)*rays_dir.unsqueeze(-2)
     sample_d=t*rays_dist
     """
     sample:B*H*W*pts*3
@@ -97,14 +100,14 @@ def randomraysSample(rays_o, rays_dir, rays_dist,pts_num, d_near, d_far):
 def view(sample, rays_o, rays_dir,pt_fine=False):
     scale = torch.linspace(0, 3.5, 2).cuda()
     if not pt_fine:
-        rays = rays_o[:,:,:,None,:]+scale.unsqueeze(-1)*rays_dir.unsqueeze(-2)
+        rays = rays_o[:,:,None,:]+scale.unsqueeze(-1)*rays_dir.unsqueeze(-2)
     else:
         rays=rays_o[:,:,None,:]+scale.unsqueeze(-1)*rays_dir[:,:,0,:].unsqueeze(-2)
     rays = rays.cpu().numpy()
     origin = rays_o.cpu().numpy()
     points = sample.cpu().detach().numpy()
     if not pt_fine:
-        B, H,W, pts, _ = points.shape
+        B, N, pts, _ = points.shape
     else:
         B,N,pts,_=points.shape
     assert (B%2==0 or B==1)
@@ -116,14 +119,13 @@ def view(sample, rays_o, rays_dir,pt_fine=False):
     ax.set_zlabel('z')
     if not pt_fine:
         for i in range(0,B,2):
-            for j in range(0,H,80):
-                for k in range(0,W,100):
-                    ax.plot(rays[i, j, k,:, 0], rays[i, j,k, :, 1], rays[i, j, k,:, 2], linewidth=1)
-                    ax.scatter(points[i, j,k, :, 0], points[i, j,k, :, 1], points[i, j, k,:, 2],s=2)
-            ax.scatter(origin[i,0,0, 0], origin[i,0,0, 1], origin[i,0,0,2],s=2)
+            for j in range(0,N,1111):
+                    ax.plot(rays[i, j, :, 0], rays[i, j, :, 1], rays[i, j, :, 2], linewidth=1)
+                    ax.scatter(points[i, j, :, 0], points[i, j, :, 1], points[i, j,:, 2],s=2)
+            ax.scatter(origin[i,0, 0], origin[i,0, 1], origin[i,0,2],s=2)
     else:
         for i in range(0,B,2):
-            for j in range(0,N,64):
+            for j in range(0,N,1):
                 ax.scatter(points[i, j, :, 0], points[i, j, :, 1], points[i, j, :, 2],s=2)
                 ax.plot(rays[i, j, :, 0], rays[i, j, :, 1], rays[i, j, :, 2], linewidth=1)
     plt.show()
@@ -136,13 +138,6 @@ def raysBatchify(sample,rays_ori,rays_dir,rays_dists,sample_d,img,batch_size=102
     res_d=[]
     res_img=[]
     B,H,W,pts,d=sample.size()
-    sample=sample.reshape((B,H*W,pts,d))
-    rays_ori=rays_ori.reshape((B,H*W,d))
-    rays_dir=rays_dir.reshape((B,H*W,pts,d))
-    rays_dists=rays_dists.unsqueeze(0).expand((B,H,W,1))
-    rays_dists=rays_dists.reshape((B,H*W))
-    sample_d=sample_d.reshape((B,H*W,pts))
-    img=img.reshape((B,3,H*W))
     group_num=(H*W)//batch_size
     if not (H*W)%batch_size==0:
         group_num+=1
@@ -208,5 +203,18 @@ def invSample(PDF,pts_num,rays_o,rays_dirs,rays_dist,near,far,coarse_dist):
     rays_dir: IB*RB*P*3
     """
     return sample,sample_dist,rays_dir
+
+def randomBatch(coarse_sample, rays_ori, rays_dirs, rays_dists, coarse_sample_dist, img,N,S):
+    index=torch.tensor(random.sample(range(N),S)).cuda()
+    coarse_s=torch.index_select(coarse_sample,1,index)
+    rays_o=torch.index_select(rays_ori,1,index)
+    rays_dir=torch.index_select(rays_dirs,1,index)
+    rays_dists=rays_dists.permute(1,0)
+    rays_dist=torch.index_select(rays_dists,1,index)
+    coarse_dist=torch.index_select(coarse_sample_dist,1,index)
+    img=img.view(-1,3,N)
+    pixel=torch.index_select(img,-1,index)
+    return coarse_s,rays_o,rays_dir,rays_dist,coarse_dist,pixel
+
 
 
