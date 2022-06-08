@@ -13,6 +13,6 @@ graph.png
 .idea/inspectionProfiles/profiles_settings.xml
 .vscode/settings.json
 .idea/.gitignore
-
+model/
 .gitignore
 batch.png

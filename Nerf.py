@@ -137,12 +137,14 @@ def raysBatchify(sample,rays_ori,rays_dir,rays_dists,sample_d,img,batch_size=102
     res_dists=[]
     res_d=[]
     res_img=[]
-    B,H,W,pts,d=sample.size()
-    group_num=(H*W)//batch_size
-    if not (H*W)%batch_size==0:
+    B,N,pts,d=sample.size()
+    group_num=(N)//batch_size
+    rays_dists=rays_dists.permute(1,0)
+    img=img.view(-1,3,N)
+    if not (N)%batch_size==0:
         group_num+=1
     for i in range(group_num):
-        if H*W-i*batch_size<batch_size:
+        if N-i*batch_size<batch_size:
            res_sample.append(sample[:,i*batch_size:,:,:])
            res_ori.append(rays_ori[:,i*batch_size:,:])
            res_dirs.append(rays_dir[:,i*batch_size:,:,:])
