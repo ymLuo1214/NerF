@@ -11,7 +11,7 @@ import random
 
 def posEmbed(x: torch.tensor, L: int) -> torch.tensor: 
     result = []
-    freq = 2.**torch.linspace(0, L-1, L)
+    freq = 2.**torch.linspace(0, L-1, L).cuda()
     func = [torch.cos, torch.sin]
     for fre in freq:
         for f in func:
@@ -217,6 +217,5 @@ def randomBatch(coarse_sample, rays_ori, rays_dirs, rays_dists, coarse_sample_di
     img=img.view(-1,3,N)
     pixel=torch.index_select(img,-1,index)
     return coarse_s,rays_o,rays_dir,rays_dist,coarse_dist,pixel
-
 
 
